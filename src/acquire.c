@@ -94,6 +94,9 @@ static float filter_taps_am[] = {
     0
 };
 
+static fft_plan_t *fft_plan_head_fm = NULL;
+static fft_plan_t *fft_plan_head_am = NULL;
+
 void acquire_process(acquire_t *st)
 {
     float complex max_v = 0, phase_increment;
@@ -188,7 +191,7 @@ void acquire_process(acquire_t *st)
             }
             temp_phase /= cabsf(temp_phase);
 
-            fftwf_execute((st->mode == NRSC5_MODE_FM) ? st->fft_plan_fm : st->fft_plan_am);
+            fftwf_execute(st->fft_plan_am->fft_plan);
             fftshift(st->fftout, st->fft);
 
             float x = st->fftcp * (i - (float) (ACQUIRE_SYMBOLS - 1) / 2);
@@ -248,7 +251,7 @@ void acquire_process(acquire_t *st)
         }
         st->phase /= cabsf(st->phase);
 
-        fftwf_execute((st->mode == NRSC5_MODE_FM) ? st->fft_plan_fm : st->fft_plan_am);
+        fftwf_execute((st->mode == NRSC5_MODE_FM) ? st->fft_plan_fm->fft_plan : st->fft_plan_am->fft_plan);
         fftshift(st->fftout, st->fft);
         sync_push(&st->input->sync, st->fftout);
     }
@@ -309,8 +312,11 @@ void acquire_init(acquire_t *st, input_t *input)
     st->filter_fm = firdecim_q15_create(filter_taps_fm, sizeof(filter_taps_fm) / sizeof(filter_taps_fm[0]));
     st->filter_am = firdecim_q15_create(filter_taps_am, sizeof(filter_taps_am) / sizeof(filter_taps_am[0]));
 
-    st->fft_plan_fm = fftwf_plan_dft_1d(FFT_FM, st->fftin, st->fftout, FFTW_FORWARD, 0);
-    st->fft_plan_am = fftwf_plan_dft_1d(FFT_AM, st->fftin, st->fftout, FFTW_FORWARD, 0);
+    st->fft_plan_fm = acquire_alloc_fft_plan(NRSC5_MODE_FM);
+    st->fft_plan_am = acquire_alloc_fft_plan(NRSC5_MODE_AM);
+
+    st->fftin = st->fft_plan_fm->fftin;
+    st->fftout = st->fft_plan_fm->fftout;
 
     for (i = 0; i < FFTCP_FM; ++i)
     {
@@ -349,6 +355,8 @@ void acquire_set_mode(acquire_t *st, int mode)
         st->fftcp = FFTCP_FM;
         st->cp = CP_FM;
         st->shape = st->shape_fm;
+        st->fftin = st->fft_plan_fm->fftin;
+        st->fftout = st->fft_plan_fm->fftout;
     }
     else
     {
@@ -356,6 +364,8 @@ void acquire_set_mode(acquire_t *st, int mode)
         st->fftcp = FFTCP_AM;
         st->cp = CP_AM;
         st->shape = st->shape_am;
+        st->fftin = st->fft_plan_am->fftin;
+        st->fftout = st->fft_plan_am->fftout;
     }
 }
 
@@ -363,6 +373,37 @@ void acquire_free(acquire_t *st)
 {
     firdecim_q15_free(st->filter_fm);
     firdecim_q15_free(st->filter_am);
-    fftwf_destroy_plan(st->fft_plan_fm);
-    fftwf_destroy_plan(st->fft_plan_am);
+    acquire_free_fft_plan(st->fft_plan_fm);
+    acquire_free_fft_plan(st->fft_plan_am);
+}
+
+fft_plan_t *acquire_alloc_fft_plan(int mode)
+{
+    fft_plan_t *plan;
+    fft_plan_t **head;
+
+    head = (mode == NRSC5_MODE_FM) ? &fft_plan_head_fm : &fft_plan_head_am;
+
+    if (*head) {
+        plan = *head;
+        *head = plan->next;
+    } else {
+        plan = malloc(sizeof(fft_plan_t));
+        plan->mode = mode;
+ 
+        plan->fft_plan = fftwf_plan_dft_1d((mode == NRSC5_MODE_FM) ? FFT_FM : FFT_AM, plan->fftin, plan->fftout, FFTW_FORWARD, 0);
+    }
+
+    plan->next = NULL;
+    return plan;
+}
+
+void acquire_free_fft_plan(fft_plan_t *plan)
+{
+    fft_plan_t **head;
+
+    head = (plan->mode == NRSC5_MODE_FM) ? &fft_plan_head_fm : &fft_plan_head_am;
+
+    plan->next = *head;
+    *head = plan;
 }

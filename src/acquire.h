@@ -4,6 +4,16 @@
 #include <fftw3.h>
 #include "firdecim_q15.h"
 
+typedef struct fft_plan_t
+{
+    fftwf_plan fft_plan;
+    float complex fftin[FFT_FM];
+    float complex fftout[FFT_FM];
+
+    int mode;
+    struct fft_plan_t *next;
+} fft_plan_t;
+
 typedef struct
 {
     struct input_t *input;
@@ -12,13 +22,13 @@ typedef struct
     cint16_t in_buffer[FFTCP_FM * (ACQUIRE_SYMBOLS + 1)];
     float complex buffer[FFTCP_FM * (ACQUIRE_SYMBOLS + 1)];
     float complex sums[FFTCP_FM];
-    float complex fftin[FFT_FM];
-    float complex fftout[FFT_FM];
+    float complex *fftin;
+    float complex *fftout;
     float *shape;
     float shape_fm[FFTCP_FM];
     float shape_am[FFTCP_AM];
-    fftwf_plan fft_plan_fm;
-    fftwf_plan fft_plan_am;
+    fft_plan_t *fft_plan_fm;
+    fft_plan_t *fft_plan_am;
 
     unsigned int idx;
     float prev_angle;
@@ -38,3 +48,5 @@ void acquire_reset(acquire_t *st);
 void acquire_init(acquire_t *st, struct input_t *input);
 void acquire_set_mode(acquire_t *st, int mode);
 void acquire_free(acquire_t *st);
+fft_plan_t *acquire_alloc_fft_plan(int mode);
+void acquire_free_fft_plan(fft_plan_t *plan);
